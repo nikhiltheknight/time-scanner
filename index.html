@@ -1,0 +1,576 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Time Scanner</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: #0d1117;
+    color: #e6edf3;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    min-height: 100vh;
+    padding: 20px;
+    user-select: none;
+  }
+
+  #app {
+    width: 100%;
+    max-width: 800px;
+    border-radius: 12px;
+    overflow: hidden;
+    background: #161b22;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+  }
+
+  /* ── Clock Bar ── */
+  #clock-bar {
+    display: flex;
+    justify-content: space-around;
+    padding: 16px 12px;
+    background: #161b22;
+    border-bottom: 1px solid #21262d;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .clock-widget {
+    text-align: center;
+    position: relative;
+    min-width: 120px;
+    flex: 1;
+  }
+
+  .clock-time {
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 1.8rem;
+    font-weight: bold;
+    letter-spacing: 2px;
+    color: #e6edf3;
+    text-shadow: 0 0 8px rgba(88,166,255,0.3);
+    line-height: 1.2;
+  }
+
+  .clock-date {
+    font-size: 0.7rem;
+    color: #8b949e;
+    margin-top: 2px;
+  }
+
+  .clock-label {
+    font-size: 0.75rem;
+    color: #58a6ff;
+    cursor: pointer;
+    margin-top: 4px;
+    padding: 2px 8px;
+    border-radius: 4px;
+    transition: background 0.15s;
+    display: inline-block;
+  }
+  .clock-label:hover {
+    background: rgba(88,166,255,0.15);
+  }
+
+  .tz-dropdown {
+    display: none;
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 240px;
+    max-height: 280px;
+    background: #1c2128;
+    border: 1px solid #30363d;
+    border-radius: 8px;
+    z-index: 100;
+    overflow: hidden;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+    flex-direction: column;
+  }
+  .tz-dropdown.open { display: flex; }
+
+  .tz-search {
+    width: 100%;
+    padding: 8px 10px;
+    background: #0d1117;
+    border: none;
+    border-bottom: 1px solid #30363d;
+    color: #e6edf3;
+    font-size: 0.8rem;
+    outline: none;
+  }
+  .tz-search::placeholder { color: #484f58; }
+
+  .tz-list {
+    overflow-y: auto;
+    flex: 1;
+  }
+
+  .tz-item {
+    padding: 6px 10px;
+    font-size: 0.78rem;
+    cursor: pointer;
+    color: #c9d1d9;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .tz-item:hover { background: rgba(88,166,255,0.15); color: #e6edf3; }
+
+  /* ── Map ── */
+  #map-container {
+    position: relative;
+    width: 100%;
+    cursor: grab;
+    line-height: 0;
+  }
+  #map-container.dragging { cursor: grabbing; }
+
+  #map-canvas {
+    width: 100%;
+    display: block;
+  }
+
+  #time-indicator {
+    display: none;
+    position: absolute;
+    top: 10px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(22,27,34,0.85);
+    padding: 4px 12px;
+    border-radius: 6px;
+    font-size: 0.8rem;
+    color: #8b949e;
+    pointer-events: none;
+    border: 1px solid #30363d;
+  }
+
+  #reset-btn {
+    display: none;
+    position: absolute;
+    bottom: 10px;
+    right: 10px;
+    background: rgba(88,166,255,0.2);
+    border: 1px solid #58a6ff;
+    color: #58a6ff;
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-size: 0.72rem;
+    cursor: pointer;
+  }
+  #reset-btn:hover { background: rgba(88,166,255,0.35); }
+
+  @media (max-width: 600px) {
+    .clock-time { font-size: 1.3rem; }
+    .clock-widget { min-width: 90px; }
+  }
+</style>
+</head>
+<body>
+
+<div id="app">
+  <div id="clock-bar"></div>
+  <div id="map-container">
+    <canvas id="map-canvas"></canvas>
+    <div id="time-indicator"></div>
+    <button id="reset-btn">Reset to now</button>
+  </div>
+</div>
+
+<script>
+// ════════════════════════════════════════════════════════════════
+// SIMPLIFIED WORLD COASTLINE DATA (equirectangular [lng, lat])
+// Derived from Natural Earth 110m, heavily simplified.
+// Each sub-array is a polygon of [lng, lat] pairs.
+// ════════════════════════════════════════════════════════════════
+const LAND=[[[-60,-52],[-69,-52],[-69,-55],[-64,-55],[-60,-52]],[[-69,-52],[-60,-52],[-60,-48],[-65,-46],[-70,-46],[-72,-49],[-74,-48],[-74,-52],[-69,-52]],[[-74,-48],[-72,-49],[-70,-46],[-65,-46],[-60,-48],[-60,-40],[-62,-38],[-58,-34],[-58,-30],[-53,-26],[-50,-24],[-48,-22],[-42,-20],[-40,-16],[-38,-12],[-37,-10],[-35,-8],[-35,-4],[-50,-2],[-52,2],[-60,5],[-62,4],[-60,2],[-60,-2],[-62,0],[-65,2],[-68,2],[-70,4],[-72,4],[-72,8],[-74,10],[-72,12],[-72,10],[-74,10],[-76,8],[-78,8],[-78,4],[-80,2],[-80,0],[-80,-2],[-78,-2],[-78,-4],[-80,-4],[-80,-8],[-78,-8],[-76,-10],[-74,-12],[-72,-14],[-70,-18],[-70,-22],[-68,-22],[-66,-22],[-66,-28],[-68,-30],[-68,-34],[-70,-36],[-70,-40],[-72,-42],[-72,-44],[-74,-44],[-76,-46],[-74,-48]],[[-80,0],[-80,2],[-78,4],[-78,8],[-76,8],[-78,10],[-82,10],[-84,10],[-84,12],[-82,14],[-80,16],[-80,18],[-78,18],[-78,16],[-76,18],[-76,20],[-78,20],[-82,22],[-84,22],[-86,22],[-88,20],[-88,18],[-90,18],[-90,16],[-92,16],[-94,18],[-96,18],[-98,20],[-100,22],[-102,22],[-104,24],[-106,24],[-108,28],[-110,30],[-112,30],[-114,32],[-118,34],[-120,34],[-122,36],[-124,40],[-124,42],[-124,46],[-124,48],[-122,48],[-120,50],[-126,50],[-126,54],[-130,56],[-134,58],[-136,58],[-140,60],[-148,60],[-150,62],[-152,60],[-164,60],[-166,62],[-168,66],[-164,68],[-162,66],[-160,64],[-158,62],[-152,62],[-148,64],[-142,62],[-138,60],[-136,62],[-140,64],[-146,64],[-148,66],[-152,68],[-154,68],[-162,70],[-164,68],[-168,66],[-172,66],[-176,68],[-180,70],[-180,72],[-176,72],[-170,72],[-168,70],[-166,72],[-164,72],[-162,74],[-156,72],[-152,72],[-150,74],[-144,74],[-138,72],[-136,70],[-132,70],[-130,72],[-126,72],[-122,74],[-120,74],[-118,72],[-112,74],[-108,76],[-100,76],[-96,78],[-92,78],[-86,78],[-80,76],[-76,78],[-68,78],[-60,74],[-56,74],[-58,72],[-62,72],[-64,70],[-62,68],[-58,68],[-54,66],[-56,64],[-60,64],[-66,68],[-68,66],[-66,64],[-62,62],[-58,62],[-56,60],[-58,56],[-60,56],[-64,58],[-66,60],[-68,60],[-70,62],[-72,64],[-76,64],[-78,62],[-78,58],[-80,56],[-80,52],[-82,52],[-82,56],[-84,58],[-86,60],[-88,62],[-92,62],[-92,58],[-94,56],[-92,52],[-90,50],[-88,48],[-84,48],[-82,46],[-82,42],[-80,38],[-80,32],[-82,30],[-86,30],[-88,30],[-90,30],[-90,28],[-94,30],[-96,28],[-98,26],[-98,24],[-96,20],[-92,16],[-92,14],[-88,14],[-86,14],[-84,12],[-82,10],[-80,8],[-80,4],[-80,2],[-80,0]],[[30,72],[26,72],[24,70],[20,70],[18,68],[16,66],[14,64],[12,62],[10,58],[10,56],[12,56],[14,58],[16,56],[18,56],[24,60],[26,62],[28,60],[30,60],[30,64],[28,68],[28,70],[30,72]],[[10,56],[10,54],[12,54],[12,48],[6,50],[4,48],[2,48],[2,46],[0,44],[-2,44],[-6,44],[-8,44],[-10,38],[-10,36],[-6,36],[-6,34],[-2,36],[0,36],[2,36],[4,38],[6,38],[8,40],[8,38],[6,38],[4,36],[0,36],[0,32],[-2,32],[-6,30],[-8,28],[-12,28],[-14,28],[-16,24],[-16,18],[-16,14],[-16,12],[-12,12],[-8,8],[-8,4],[-4,4],[0,6],[2,6],[4,4],[8,4],[10,2],[10,0],[10,-2],[12,-4],[14,-4],[14,-2],[16,0],[16,2],[18,0],[22,-2],[24,-4],[28,-4],[30,-4],[32,-4],[34,-4],[34,-6],[34,-10],[32,-14],[30,-18],[28,-22],[28,-26],[28,-30],[26,-30],[24,-32],[26,-34],[28,-34],[30,-32],[32,-28],[34,-24],[36,-20],[36,-14],[38,-12],[40,-10],[42,-10],[42,-2],[44,0],[44,4],[42,4],[42,8],[44,12],[44,14],[42,14],[38,12],[36,14],[36,20],[34,22],[34,24],[36,28],[36,32],[36,36],[34,38],[32,38],[30,36],[30,34],[32,32],[36,34],[36,32],[34,28],[32,30],[34,32],[32,34],[30,34],[28,34],[26,38],[24,38],[22,36],[28,36],[30,34],[28,34],[26,36],[22,36],[20,38],[18,40],[16,44],[12,46],[10,48],[6,50],[10,50],[10,52],[10,54],[10,56]],[[44,12],[42,8],[42,4],[44,4],[46,4],[46,2],[48,0],[52,0],[52,2],[54,4],[54,8],[56,10],[56,14],[56,16],[56,20],[56,24],[54,24],[52,22],[52,24],[56,26],[56,28],[54,28],[52,28],[50,28],[48,30],[48,28],[46,28],[44,28],[42,28],[40,28],[38,28],[36,28],[36,32],[34,32],[32,32],[30,34],[28,36],[26,38],[28,38],[28,36],[30,36],[34,38],[36,38],[38,38],[40,40],[40,42],[42,42],[44,40],[44,36],[46,38],[48,38],[50,38],[52,38],[54,38],[56,40],[58,40],[60,38],[62,38],[64,36],[66,38],[68,38],[68,36],[66,34],[66,32],[68,30],[68,28],[68,24],[70,24],[72,22],[74,24],[76,24],[78,22],[78,20],[80,18],[80,14],[80,10],[80,8],[78,8],[76,10],[74,8],[72,10],[72,8],[74,6],[76,8],[78,6],[76,4],[74,6],[72,8],[70,8],[68,8],[66,8],[66,6],[68,6],[68,4],[64,6],[62,8],[60,8],[58,8],[56,10],[56,8],[54,6],[52,4],[50,4],[48,6],[46,6],[44,8],[44,12]],[[80,8],[80,10],[80,14],[80,18],[82,18],[82,16],[84,18],[84,14],[82,12],[80,8]],[[84,14],[84,18],[86,18],[88,22],[88,24],[90,24],[92,22],[92,20],[96,18],[98,16],[98,14],[100,14],[100,16],[102,16],[102,22],[104,20],[104,16],[104,14],[106,18],[106,22],[108,22],[108,16],[106,16],[104,14],[102,14],[102,10],[104,8],[106,2],[106,0],[104,2],[102,2],[102,6],[100,8],[100,4],[102,0],[104,-2],[106,-4],[108,-6],[110,-8],[112,-8],[116,-8],[120,-8],[120,-10],[116,-8],[114,-8],[112,-8],[108,-4],[106,-2],[104,0],[102,-2],[104,-4],[106,-6],[106,-8],[110,-8],[112,-8],[114,-8],[116,-10],[118,-8],[120,-10],[118,-10],[116,-10],[114,-8],[112,-8],[108,-8],[106,-6],[106,-4],[104,-2],[102,0],[100,2],[100,6],[100,8],[102,6],[102,2],[104,0],[104,-2],[106,-4],[108,-6],[110,-8],[108,-6],[106,-2],[104,2],[102,2],[100,2],[98,4],[96,6],[98,8],[100,8],[100,10],[100,14],[98,14],[96,10],[98,8],[96,6],[94,6],[92,8],[90,8],[88,8],[86,10],[84,14]],[[92,22],[92,24],[94,24],[96,28],[100,28],[102,24],[102,22],[104,20],[102,22],[100,22],[98,24],[96,26],[94,22],[92,22]],[[126,8],[124,8],[122,8],[120,6],[118,4],[116,4],[114,4],[112,2],[110,2],[108,2],[106,2],[106,6],[104,8],[102,10],[102,14],[104,14],[106,16],[108,16],[108,22],[110,22],[112,20],[114,16],[112,14],[114,14],[116,14],[116,18],[116,20],[118,18],[118,22],[120,22],[120,18],[122,18],[124,16],[124,10],[126,8]],[[-180,70],[-180,66],[-176,66],[-176,68],[-180,70]],[[134,-2],[132,-2],[130,0],[128,2],[126,2],[126,4],[128,4],[130,2],[132,0],[134,-2]],[[138,-4],[136,-2],[134,-2],[136,-4],[136,-6],[138,-8],[140,-6],[140,-4],[138,-4]],[[148,-6],[146,-6],[142,-4],[140,-4],[138,-2],[136,0],[134,0],[132,-2],[130,-2],[128,-2],[126,0],[124,0],[122,-2],[120,-2],[120,-6],[120,-10],[122,-12],[124,-14],[128,-16],[130,-18],[132,-18],[134,-18],[136,-16],[138,-18],[142,-18],[144,-20],[146,-22],[146,-24],[148,-24],[148,-22],[150,-22],[150,-24],[150,-26],[148,-28],[148,-30],[148,-34],[148,-38],[146,-40],[146,-42],[148,-44],[148,-40],[150,-38],[152,-34],[152,-30],[152,-26],[152,-24],[150,-22],[148,-20],[148,-16],[148,-12],[146,-10],[148,-8],[148,-6]],[[168,-44],[170,-44],[174,-42],[174,-40],[172,-40],[168,-44]],[[174,-36],[172,-38],[170,-42],[168,-44],[166,-46],[168,-46],[170,-44],[172,-42],[174,-42],[176,-38],[176,-36],[174,-36]],[[80,72],[80,76],[86,76],[90,74],[94,76],[100,78],[104,78],[102,76],[108,76],[112,74],[118,72],[120,74],[122,72],[126,72],[130,72],[132,70],[138,72],[140,74],[144,74],[150,72],[152,72],[156,72],[162,74],[164,72],[166,72],[168,70],[176,72],[180,72],[180,70],[172,66],[168,66],[164,68],[162,70],[156,68],[152,68],[148,66],[146,64],[140,64],[136,62],[138,60],[142,62],[148,64],[152,62],[158,62],[160,64],[166,66],[168,66],[172,66],[176,68],[180,70],[180,66],[176,66],[172,66],[176,68],[180,68],[180,64],[178,64],[176,66],[172,66],[168,66],[166,62],[162,60],[158,58],[152,58],[148,56],[144,54],[142,52],[140,48],[136,48],[134,48],[132,46],[130,44],[132,42],[134,44],[138,46],[140,46],[142,46],[142,44],[140,44],[138,42],[140,40],[142,38],[146,38],[148,36],[148,34],[146,34],[144,36],[142,36],[140,38],[138,40],[134,36],[132,36],[130,32],[128,32],[128,34],[126,34],[128,38],[130,40],[128,42],[126,40],[124,38],[122,34],[120,34],[118,36],[114,34],[110,32],[106,28],[102,28],[100,28],[96,28],[94,24],[92,24],[92,22],[88,24],[86,20],[84,18],[82,18],[80,18],[78,22],[76,24],[74,24],[72,24],[70,28],[68,28],[68,30],[66,32],[66,34],[68,36],[68,38],[66,38],[62,40],[58,42],[54,42],[52,44],[54,46],[52,50],[50,52],[48,56],[42,58],[42,60],[44,62],[40,64],[38,66],[38,68],[40,68],[40,66],[44,66],[44,68],[40,68],[38,68],[36,70],[40,70],[42,72],[42,74],[44,74],[46,76],[52,76],[50,74],[48,72],[50,72],[52,74],[56,74],[58,72],[62,72],[64,74],[68,74],[68,72],[72,72],[74,74],[76,72],[78,72],[80,72]]];
+
+// ════════════════════════════════════════════════════════════════
+// STATE
+// ════════════════════════════════════════════════════════════════
+let timeOffsetMs = 0;
+let isDragging = false;
+let dragStartX = 0;
+let dragStartOffset = 0;
+let selectedTimezones = [
+  'America/New_York',
+  'Europe/London',
+  'Asia/Tokyo',
+  'Australia/Sydney'
+];
+
+// ════════════════════════════════════════════════════════════════
+// CANVAS & ELEMENTS
+// ════════════════════════════════════════════════════════════════
+const canvas = document.getElementById('map-canvas');
+const ctx = canvas.getContext('2d');
+const mapContainer = document.getElementById('map-container');
+const clockBar = document.getElementById('clock-bar');
+const timeIndicator = document.getElementById('time-indicator');
+const resetBtn = document.getElementById('reset-btn');
+
+let baseMapCache = null; // offscreen canvas for the base map
+let canvasW = 0, canvasH = 0;
+const DPR = window.devicePixelRatio || 1;
+
+// ════════════════════════════════════════════════════════════════
+// SOLAR MATH
+// ════════════════════════════════════════════════════════════════
+function toRad(d) { return d * Math.PI / 180; }
+
+function dayOfYear(date) {
+  const start = new Date(date.getUTCFullYear(), 0, 0);
+  const diff = date - start;
+  return Math.floor(diff / 86400000);
+}
+
+function getSolarPosition(date) {
+  const doy = dayOfYear(date);
+  // Solar declination (approximate)
+  const declination = -23.44 * Math.cos(toRad((360 / 365) * (doy + 10)));
+  // Subsolar longitude
+  const utcH = date.getUTCHours() + date.getUTCMinutes() / 60 + date.getUTCSeconds() / 3600;
+  let subsolarLng = 180 - (utcH / 24) * 360;
+  if (subsolarLng < -180) subsolarLng += 360;
+  if (subsolarLng > 180) subsolarLng -= 360;
+  return { declination, subsolarLng };
+}
+
+// ════════════════════════════════════════════════════════════════
+// MAP RENDERING
+// ════════════════════════════════════════════════════════════════
+function lngToX(lng) { return (lng + 180) / 360 * canvasW; }
+function latToY(lat) { return (90 - lat) / 180 * canvasH; }
+
+function drawBaseMap() {
+  const offscreen = document.createElement('canvas');
+  offscreen.width = canvasW;
+  offscreen.height = canvasH;
+  const octx = offscreen.getContext('2d');
+
+  // Ocean
+  octx.fillStyle = '#0a1628';
+  octx.fillRect(0, 0, canvasW, canvasH);
+
+  // Land
+  octx.fillStyle = '#1a2d50';
+  octx.strokeStyle = '#243a5e';
+  octx.lineWidth = 0.5;
+
+  for (const poly of LAND) {
+    octx.beginPath();
+    for (let i = 0; i < poly.length; i++) {
+      const x = lngToX(poly[i][0]);
+      const y = latToY(poly[i][1]);
+      if (i === 0) octx.moveTo(x, y);
+      else octx.lineTo(x, y);
+    }
+    octx.closePath();
+    octx.fill();
+    octx.stroke();
+  }
+
+  baseMapCache = offscreen;
+}
+
+function drawSunlightOverlay(date) {
+  const { declination, subsolarLng } = getSolarPosition(date);
+  const decRad = toRad(declination);
+
+  // Use a lower resolution for the overlay for performance
+  const step = 3;
+  const overlayCanvas = document.createElement('canvas');
+  overlayCanvas.width = canvasW;
+  overlayCanvas.height = canvasH;
+  const octx = overlayCanvas.getContext('2d');
+  const imgData = octx.createImageData(canvasW, canvasH);
+  const data = imgData.data;
+
+  for (let py = 0; py < canvasH; py += step) {
+    const lat = 90 - (py / canvasH) * 180;
+    const latRad = toRad(lat);
+    const sinLat = Math.sin(latRad);
+    const cosLat = Math.cos(latRad);
+    const sinDec = Math.sin(decRad);
+    const cosDec = Math.cos(decRad);
+
+    for (let px = 0; px < canvasW; px += step) {
+      const lng = (px / canvasW) * 360 - 180;
+      const ha = toRad(lng - subsolarLng);
+      const sinAlt = sinLat * sinDec + cosLat * cosDec * Math.cos(ha);
+
+      let alpha;
+      if (sinAlt > 0.05) {
+        // Day: light overlay
+        alpha = 0; // no darkening
+      } else if (sinAlt < -0.1) {
+        // Night: dark overlay
+        alpha = 120;
+      } else {
+        // Twilight: smooth gradient
+        const t = (sinAlt - 0.05) / (-0.15); // 0 at day edge, 1 at night edge
+        alpha = Math.floor(t * 120);
+      }
+
+      // Fill the step x step block
+      for (let dy = 0; dy < step && (py + dy) < canvasH; dy++) {
+        for (let dx = 0; dx < step && (px + dx) < canvasW; dx++) {
+          const idx = ((py + dy) * canvasW + (px + dx)) * 4;
+          data[idx] = 0;
+          data[idx + 1] = 0;
+          data[idx + 2] = 0;
+          data[idx + 3] = alpha;
+        }
+      }
+    }
+  }
+
+  octx.putImageData(imgData, 0, 0);
+
+  // Also draw a subtle sun glow at the subsolar point
+  const sunX = lngToX(subsolarLng);
+  const sunY = latToY(declination);
+  const grad = octx.createRadialGradient(sunX, sunY, 0, sunX, sunY, canvasH * 0.15);
+  grad.addColorStop(0, 'rgba(255,220,100,0.08)');
+  grad.addColorStop(1, 'rgba(255,220,100,0)');
+  octx.fillStyle = grad;
+  octx.fillRect(0, 0, canvasW, canvasH);
+
+  return overlayCanvas;
+}
+
+function render() {
+  const effectiveDate = new Date(Date.now() + timeOffsetMs);
+
+  if (!baseMapCache) drawBaseMap();
+
+  ctx.drawImage(baseMapCache, 0, 0);
+
+  const overlay = drawSunlightOverlay(effectiveDate);
+  ctx.drawImage(overlay, 0, 0);
+
+  // Draw subtle grid lines
+  ctx.strokeStyle = 'rgba(88,166,255,0.06)';
+  ctx.lineWidth = 0.5;
+  for (let lng = -180; lng <= 180; lng += 30) {
+    const x = lngToX(lng);
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvasH); ctx.stroke();
+  }
+  for (let lat = -90; lat <= 90; lat += 30) {
+    const y = latToY(lat);
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvasW, y); ctx.stroke();
+  }
+}
+
+// ════════════════════════════════════════════════════════════════
+// CLOCKS
+// ════════════════════════════════════════════════════════════════
+function friendlyName(tz) {
+  return tz.replace(/_/g, ' ').split('/').pop();
+}
+
+function buildClockBar() {
+  clockBar.innerHTML = '';
+  for (let i = 0; i < 4; i++) {
+    const tz = selectedTimezones[i];
+    const w = document.createElement('div');
+    w.className = 'clock-widget';
+    w.innerHTML = `
+      <div class="clock-time" id="ct${i}">--:--:--</div>
+      <div class="clock-date" id="cd${i}"></div>
+      <div class="clock-label" id="cl${i}">${friendlyName(tz)}</div>
+      <div class="tz-dropdown" id="dd${i}">
+        <input class="tz-search" placeholder="Search timezone..." id="ds${i}">
+        <div class="tz-list" id="dl${i}"></div>
+      </div>`;
+    clockBar.appendChild(w);
+  }
+
+  // Wire up dropdowns
+  for (let i = 0; i < 4; i++) {
+    const label = document.getElementById(`cl${i}`);
+    const dropdown = document.getElementById(`dd${i}`);
+    const search = document.getElementById(`ds${i}`);
+    const list = document.getElementById(`dl${i}`);
+
+    label.addEventListener('click', (e) => {
+      e.stopPropagation();
+      // Close others
+      document.querySelectorAll('.tz-dropdown.open').forEach(d => {
+        if (d !== dropdown) d.classList.remove('open');
+      });
+      dropdown.classList.toggle('open');
+      if (dropdown.classList.contains('open')) {
+        search.value = '';
+        populateTzList(list, '', i);
+        search.focus();
+      }
+    });
+
+    search.addEventListener('input', () => {
+      populateTzList(list, search.value, i);
+    });
+    search.addEventListener('click', e => e.stopPropagation());
+  }
+
+  document.addEventListener('click', () => {
+    document.querySelectorAll('.tz-dropdown.open').forEach(d => d.classList.remove('open'));
+  });
+}
+
+function getAllTimezones() {
+  try {
+    return Intl.supportedValuesOf('timeZone');
+  } catch {
+    // Fallback for older browsers
+    return [
+      'America/New_York','America/Chicago','America/Denver','America/Los_Angeles',
+      'America/Anchorage','Pacific/Honolulu','America/Sao_Paulo','America/Buenos_Aires',
+      'Europe/London','Europe/Paris','Europe/Berlin','Europe/Moscow',
+      'Asia/Dubai','Asia/Kolkata','Asia/Bangkok','Asia/Shanghai',
+      'Asia/Tokyo','Asia/Seoul','Australia/Sydney','Pacific/Auckland',
+      'Africa/Cairo','Africa/Lagos','Africa/Johannesburg','Asia/Singapore'
+    ];
+  }
+}
+
+function populateTzList(listEl, filter, clockIndex) {
+  const allTz = getAllTimezones();
+  const filtered = filter
+    ? allTz.filter(tz => tz.toLowerCase().includes(filter.toLowerCase()))
+    : allTz;
+
+  listEl.innerHTML = '';
+  const frag = document.createDocumentFragment();
+  for (const tz of filtered.slice(0, 100)) {
+    const item = document.createElement('div');
+    item.className = 'tz-item';
+    item.textContent = tz.replace(/_/g, ' ');
+    item.addEventListener('click', (e) => {
+      e.stopPropagation();
+      selectedTimezones[clockIndex] = tz;
+      document.getElementById(`cl${clockIndex}`).textContent = friendlyName(tz);
+      document.getElementById(`dd${clockIndex}`).classList.remove('open');
+      updateClocks();
+    });
+    frag.appendChild(item);
+  }
+  listEl.appendChild(frag);
+}
+
+function updateClocks() {
+  const now = new Date(Date.now() + timeOffsetMs);
+  for (let i = 0; i < 4; i++) {
+    const tz = selectedTimezones[i];
+    try {
+      const timeFmt = new Intl.DateTimeFormat('en-GB', {
+        timeZone: tz, hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+      });
+      const dateFmt = new Intl.DateTimeFormat('en-GB', {
+        timeZone: tz, weekday: 'short', month: 'short', day: 'numeric'
+      });
+      document.getElementById(`ct${i}`).textContent = timeFmt.format(now);
+      document.getElementById(`cd${i}`).textContent = dateFmt.format(now);
+    } catch {
+      document.getElementById(`ct${i}`).textContent = '--:--:--';
+    }
+  }
+}
+
+// ════════════════════════════════════════════════════════════════
+// DRAG INTERACTION
+// ════════════════════════════════════════════════════════════════
+function onDragStart(x) {
+  isDragging = true;
+  dragStartX = x;
+  dragStartOffset = timeOffsetMs;
+  mapContainer.classList.add('dragging');
+}
+
+function onDragMove(x) {
+  if (!isDragging) return;
+  const dx = x - dragStartX;
+  const rect = canvas.getBoundingClientRect();
+  // Full canvas width = 24 hours
+  timeOffsetMs = dragStartOffset + (dx / rect.width) * 24 * 3600 * 1000;
+  updateClocks();
+  render();
+
+  // Show time indicator
+  const offsetHours = timeOffsetMs / 3600000;
+  const sign = offsetHours >= 0 ? '+' : '';
+  const h = Math.floor(Math.abs(offsetHours));
+  const m = Math.floor((Math.abs(offsetHours) - h) * 60);
+  timeIndicator.style.display = 'block';
+  timeIndicator.textContent = `${sign}${offsetHours < 0 ? '-' : ''}${h}h ${m}m from now`;
+
+  resetBtn.style.display = Math.abs(timeOffsetMs) > 60000 ? 'block' : 'none';
+}
+
+function onDragEnd() {
+  isDragging = false;
+  mapContainer.classList.remove('dragging');
+}
+
+canvas.addEventListener('mousedown', e => onDragStart(e.clientX));
+window.addEventListener('mousemove', e => onDragMove(e.clientX));
+window.addEventListener('mouseup', onDragEnd);
+
+canvas.addEventListener('touchstart', e => {
+  e.preventDefault();
+  onDragStart(e.touches[0].clientX);
+}, { passive: false });
+window.addEventListener('touchmove', e => onDragMove(e.touches[0].clientX));
+window.addEventListener('touchend', onDragEnd);
+
+resetBtn.addEventListener('click', () => {
+  timeOffsetMs = 0;
+  timeIndicator.style.display = 'none';
+  resetBtn.style.display = 'none';
+  updateClocks();
+  render();
+});
+
+// ════════════════════════════════════════════════════════════════
+// RESIZE & INIT
+// ════════════════════════════════════════════════════════════════
+function resize() {
+  const rect = mapContainer.getBoundingClientRect();
+  const w = Math.floor(rect.width);
+  const h = Math.floor(w / 2); // 2:1 aspect ratio
+  canvas.width = w * DPR;
+  canvas.height = h * DPR;
+  canvas.style.height = h + 'px';
+  ctx.scale(DPR, DPR);
+  canvasW = w;
+  canvasH = h;
+  baseMapCache = null;
+  render();
+}
+
+function tick() {
+  if (!isDragging) {
+    updateClocks();
+    render();
+  }
+  setTimeout(tick, 1000);
+}
+
+function init() {
+  buildClockBar();
+  resize();
+  tick();
+}
+
+window.addEventListener('resize', resize);
+document.addEventListener('DOMContentLoaded', init);
+if (document.readyState !== 'loading') init();
+</script>
+</body>
+</html>

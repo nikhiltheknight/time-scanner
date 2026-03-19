@@ -214,6 +214,7 @@ const LOCATIONS = [
   // Americas
   { name: 'Honolulu', tz: 'Pacific/Honolulu', lat: 21.3, lng: -157.8 },
   { name: 'Anchorage', tz: 'America/Anchorage', lat: 61.2, lng: -149.9 },
+  { name: 'San Francisco', tz: 'America/Los_Angeles', lat: 37.8, lng: -122.4 },
   { name: 'Los Angeles', tz: 'America/Los_Angeles', lat: 34.1, lng: -118.2 },
   { name: 'Denver', tz: 'America/Denver', lat: 39.7, lng: -104.9 },
   { name: 'Chicago', tz: 'America/Chicago', lat: 41.9, lng: -87.6 },
@@ -242,6 +243,7 @@ const LOCATIONS = [
   { name: 'Dubai', tz: 'Asia/Dubai', lat: 25.3, lng: 55.3 },
   { name: 'Karachi', tz: 'Asia/Karachi', lat: 24.9, lng: 67.0 },
   { name: 'Mumbai', tz: 'Asia/Kolkata', lat: 19.1, lng: 72.9 },
+  { name: 'Bangalore', tz: 'Asia/Kolkata', lat: 12.97, lng: 77.6 },
   { name: 'Delhi', tz: 'Asia/Kolkata', lat: 28.6, lng: 77.2 },
   { name: 'Kolkata', tz: 'Asia/Kolkata', lat: 22.6, lng: 88.4 },
   { name: 'Kathmandu', tz: 'Asia/Kathmandu', lat: 27.7, lng: 85.3 },
@@ -257,6 +259,7 @@ const LOCATIONS = [
   { name: 'Tokyo', tz: 'Asia/Tokyo', lat: 35.7, lng: 139.7 },
   // Oceania
   { name: 'Perth', tz: 'Australia/Perth', lat: -31.9, lng: 115.9 },
+  { name: 'Melbourne', tz: 'Australia/Melbourne', lat: -37.8, lng: 145.0 },
   { name: 'Sydney', tz: 'Australia/Sydney', lat: -33.9, lng: 151.2 },
   { name: 'Auckland', tz: 'Pacific/Auckland', lat: -36.9, lng: 174.8 },
 ];
@@ -347,7 +350,12 @@ function getSolarPosition(date) {
 // ════════════════════════════════════════════════════════════════
 // MAP RENDERING
 // ════════════════════════════════════════════════════════════════
-function lngToX(lng) { return (lng + 180) / 360 * canvasW; }
+// Shift map so left edge starts at -168° (pure ocean), Alaska on far left
+const MAP_SHIFT = 12;
+
+function lngToX(lng) {
+  return (((lng - MAP_SHIFT + 180) % 360 + 360) % 360) / 360 * canvasW;
+}
 function latToY(lat) { return (90 - lat) / 180 * canvasH; }
 
 function drawBaseMap() {
@@ -360,7 +368,7 @@ function drawBaseMap() {
   octx.fillStyle = '#0a1628';
   octx.fillRect(0, 0, canvasW, canvasH);
 
-  // Land
+  // Land — render in original -180..180 coordinates
   octx.fillStyle = '#1a2d50';
   octx.strokeStyle = '#243a5e';
   octx.lineWidth = 0.5;
@@ -368,14 +376,27 @@ function drawBaseMap() {
   for (const poly of LAND) {
     octx.beginPath();
     for (let i = 0; i < poly.length; i++) {
-      const x = lngToX(poly[i][0]);
-      const y = latToY(poly[i][1]);
+      const x = (poly[i][0] + 180) / 360 * canvasW;
+      const y = (90 - poly[i][1]) / 180 * canvasH;
       if (i === 0) octx.moveTo(x, y);
       else octx.lineTo(x, y);
     }
     octx.closePath();
     octx.fill();
     octx.stroke();
+  }
+
+  // Pixel-shift the rendered map so left edge = -168° longitude
+  const shiftPx = Math.round((MAP_SHIFT / 360) * canvasW);
+  if (shiftPx > 0) {
+    const temp = document.createElement('canvas');
+    temp.width = canvasW;
+    temp.height = canvasH;
+    const tctx = temp.getContext('2d');
+    tctx.drawImage(offscreen, shiftPx, 0, canvasW - shiftPx, canvasH, 0, 0, canvasW - shiftPx, canvasH);
+    tctx.drawImage(offscreen, 0, 0, shiftPx, canvasH, canvasW - shiftPx, 0, shiftPx, canvasH);
+    octx.clearRect(0, 0, canvasW, canvasH);
+    octx.drawImage(temp, 0, 0);
   }
 
   baseMapCache = offscreen;
@@ -385,7 +406,7 @@ function drawSunlightOverlay(date) {
   const { declination, subsolarLng } = getSolarPosition(date);
   const decRad = toRad(declination);
 
-  const step = 3;
+  const step = 2;
   const overlayCanvas = document.createElement('canvas');
   overlayCanvas.width = canvasW;
   overlayCanvas.height = canvasH;
@@ -403,17 +424,20 @@ function drawSunlightOverlay(date) {
     const cosLat = Math.cos(latRad);
 
     for (let px = 0; px < canvasW; px += step) {
-      const lng = (px / canvasW) * 360 - 180;
+      // Map pixel to longitude accounting for map shift
+      let lng = (px / canvasW) * 360 - 180 + MAP_SHIFT;
+      if (lng > 180) lng -= 360;
       const ha = toRad(lng - subsolarLng);
       const sinAlt = sinLat * sinDec + cosLat * cosDec * Math.cos(ha);
 
+      // Smooth transition: daylight above ~0°, full night below ~-6° (civil twilight)
       let alpha;
-      if (sinAlt > 0.05) {
+      if (sinAlt > 0.0) {
         alpha = 0;
-      } else if (sinAlt < -0.1) {
+      } else if (sinAlt < -0.105) {
         alpha = 120;
       } else {
-        const t = (sinAlt - 0.05) / (-0.15);
+        const t = (sinAlt - 0.0) / (-0.105);
         alpha = Math.floor(t * 120);
       }
 
@@ -430,15 +454,6 @@ function drawSunlightOverlay(date) {
   }
 
   octx.putImageData(imgData, 0, 0);
-
-  // Subtle sun glow
-  const sunX = lngToX(subsolarLng);
-  const sunY = latToY(declination);
-  const grad = octx.createRadialGradient(sunX, sunY, 0, sunX, sunY, canvasH * 0.15);
-  grad.addColorStop(0, 'rgba(255,220,100,0.08)');
-  grad.addColorStop(1, 'rgba(255,220,100,0)');
-  octx.fillStyle = grad;
-  octx.fillRect(0, 0, canvasW, canvasH);
 
   return overlayCanvas;
 }
@@ -498,6 +513,11 @@ function render() {
 // ════════════════════════════════════════════════════════════════
 // CLOCKS
 // ════════════════════════════════════════════════════════════════
+function sortClocksByLongitude() {
+  // Sort selected locations by their x-position on the map (left to right)
+  selectedLocationIdx.sort((a, b) => lngToX(LOCATIONS[a].lng) - lngToX(LOCATIONS[b].lng));
+}
+
 function buildClockBar() {
   clockBar.innerHTML = '';
   for (let i = 0; i < 4; i++) {
@@ -552,8 +572,12 @@ function populateLocationList(listEl, filter, clockIndex) {
   const now = new Date(Date.now() + timeOffsetMs);
   const lowerFilter = filter.toLowerCase();
 
-  // Filter locations by name, timezone, or abbreviation
-  const filtered = LOCATIONS.filter(loc => {
+  // Locations already used by other clocks (prevent duplicates)
+  const usedIndices = new Set(selectedLocationIdx.filter((_, i) => i !== clockIndex));
+
+  // Filter locations by name, timezone, or abbreviation — exclude already-used locations
+  const filtered = LOCATIONS.filter((loc, idx) => {
+    if (usedIndices.has(idx)) return false;
     if (!filter) return true;
     const offset = getUtcOffset(loc.tz, now);
     const abbr = getShortTzName(loc.tz, now);
@@ -577,8 +601,9 @@ function populateLocationList(listEl, filter, clockIndex) {
     item.addEventListener('click', (e) => {
       e.stopPropagation();
       selectedLocationIdx[clockIndex] = locIdx;
-      document.getElementById(`clt${clockIndex}`).textContent = loc.name;
-      document.getElementById(`dd${clockIndex}`).classList.remove('open');
+      // Sort clocks by map longitude order, then rebuild the clock bar
+      sortClocksByLongitude();
+      buildClockBar();
       updateClocks();
       render();
     });
@@ -685,6 +710,7 @@ function tick() {
 }
 
 function init() {
+  sortClocksByLongitude();
   buildClockBar();
   resize();
   tick();

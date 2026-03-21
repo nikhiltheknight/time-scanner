@@ -287,6 +287,7 @@ let timeOffsetMs = 0;
 let isDragging = false;
 let dragStartX = 0;
 let dragStartOffset = 0;
+let timeFrozen = false;
 
 // Each slot stores the index into LOCATIONS
 let selectedLocationIdx = [
@@ -681,6 +682,7 @@ function onDragMove(x) {
 function onDragEnd() {
   isDragging = false;
   mapContainer.classList.remove('dragging');
+  timeFrozen = Math.abs(timeOffsetMs) > 60000;
 }
 
 canvas.addEventListener('mousedown', e => onDragStart(e.clientX));
@@ -696,6 +698,7 @@ window.addEventListener('touchend', onDragEnd);
 
 resetBtn.addEventListener('click', () => {
   timeOffsetMs = 0;
+  timeFrozen = false;
   timeIndicator.style.display = 'none';
   resetBtn.style.display = 'none';
   updateClocks();
@@ -720,7 +723,7 @@ function resize() {
 }
 
 function tick() {
-  if (!isDragging) {
+  if (!isDragging && !timeFrozen) {
     updateClocks();
     render();
   }

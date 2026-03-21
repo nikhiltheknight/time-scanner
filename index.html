@@ -213,6 +213,77 @@
   }
   #reset-btn:hover { background: rgba(88,166,255,0.35); }
 
+  /* ── Settings ── */
+  #settings-btn {
+    position: absolute;
+    bottom: 10px;
+    left: 10px;
+    background: rgba(88,166,255,0.2);
+    border: 1px solid #58a6ff;
+    color: #58a6ff;
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    font-size: 1rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+  }
+  #settings-btn:hover { background: rgba(88,166,255,0.35); }
+
+  #settings-panel {
+    display: none;
+    background: #1c2128;
+    border-top: 1px solid #30363d;
+    padding: 14px 18px;
+    font-size: 0.78rem;
+    color: #c9d1d9;
+  }
+  #settings-panel.open { display: block; }
+
+  .settings-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+  }
+  .settings-row:last-child { margin-bottom: 0; }
+
+  .settings-label {
+    width: 110px;
+    flex-shrink: 0;
+    color: #8b949e;
+  }
+
+  .settings-colors {
+    display: flex;
+    gap: 8px;
+  }
+  .settings-colors input[type="color"] {
+    width: 28px;
+    height: 28px;
+    border: 1px solid #30363d;
+    border-radius: 4px;
+    background: none;
+    cursor: pointer;
+    padding: 0;
+  }
+
+  .settings-slider {
+    flex: 1;
+    max-width: 200px;
+    accent-color: #58a6ff;
+  }
+
+  .settings-value {
+    width: 40px;
+    text-align: right;
+    color: #8b949e;
+    font-size: 0.72rem;
+  }
+
   @media (max-width: 600px) {
     .clock-time { font-size: 1.3rem; }
     .clock-widget { min-width: 90px; }
@@ -227,6 +298,23 @@
     <canvas id="map-canvas"></canvas>
     <div id="time-indicator"></div>
     <button id="reset-btn">Reset to now</button>
+    <button id="settings-btn">&#9881;</button>
+  </div>
+  <div id="settings-panel">
+    <div class="settings-row">
+      <span class="settings-label">Accent colors</span>
+      <div class="settings-colors" id="color-pickers"></div>
+    </div>
+    <div class="settings-row">
+      <span class="settings-label">Widget opacity</span>
+      <input type="range" class="settings-slider" id="opacity-slider" min="30" max="100" value="100">
+      <span class="settings-value" id="opacity-value">100%</span>
+    </div>
+    <div class="settings-row">
+      <span class="settings-label">Clock font size</span>
+      <input type="range" class="settings-slider" id="fontsize-slider" min="10" max="32" value="18">
+      <span class="settings-value" id="fontsize-value">1.8rem</span>
+    </div>
   </div>
 </div>
 
@@ -296,7 +384,37 @@ const LOCATIONS = [
 ];
 
 // Marker colors for the 4 clock slots
-const MARKER_COLORS = ['#ff6b6b', '#51cf66', '#ffd43b', '#cc5de8'];
+const DEFAULT_COLORS = ['#ff6b6b', '#51cf66', '#ffd43b', '#cc5de8'];
+const MARKER_COLORS = [...DEFAULT_COLORS];
+
+// ════════════════════════════════════════════════════════════════
+// SETTINGS (persisted to localStorage)
+// ════════════════════════════════════════════════════════════════
+const savedSettings = JSON.parse(localStorage.getItem('ts-settings') || '{}');
+if (savedSettings.colors) {
+  savedSettings.colors.forEach((c, i) => { if (i < 4) MARKER_COLORS[i] = c; });
+}
+let widgetOpacity = savedSettings.opacity ?? 100;
+let clockFontSize = savedSettings.fontSize ?? 18;
+
+function saveSettings() {
+  localStorage.setItem('ts-settings', JSON.stringify({
+    colors: [...MARKER_COLORS],
+    opacity: widgetOpacity,
+    fontSize: clockFontSize,
+  }));
+}
+
+function applySettings() {
+  // Opacity on clock widgets
+  document.querySelectorAll('.clock-widget').forEach(w => {
+    w.style.opacity = widgetOpacity / 100;
+  });
+  // Font size on clock time displays
+  document.querySelectorAll('.clock-time').forEach(el => {
+    el.style.fontSize = (clockFontSize / 10) + 'rem';
+  });
+}
 
 // ════════════════════════════════════════════════════════════════
 // STATE
@@ -686,6 +804,7 @@ function populateLocationList(listEl, filter, clockIndex) {
       sortClocksByLongitude();
       buildClockBar();
       updateClocks();
+      applySettings();
       render();
     });
 
@@ -798,9 +917,60 @@ function tick() {
   setTimeout(tick, 1000);
 }
 
+function initSettings() {
+  const panel = document.getElementById('settings-panel');
+  const btn = document.getElementById('settings-btn');
+  btn.addEventListener('click', () => panel.classList.toggle('open'));
+
+  // Color pickers
+  const colorContainer = document.getElementById('color-pickers');
+  for (let i = 0; i < 4; i++) {
+    const input = document.createElement('input');
+    input.type = 'color';
+    input.value = MARKER_COLORS[i];
+    input.title = `Clock ${i + 1} accent`;
+    input.addEventListener('input', () => {
+      MARKER_COLORS[i] = input.value;
+      saveSettings();
+      buildClockBar();
+      updateClocks();
+      applySettings();
+      baseMapCache = null;
+      render();
+    });
+    colorContainer.appendChild(input);
+  }
+
+  // Opacity slider
+  const opSlider = document.getElementById('opacity-slider');
+  const opValue = document.getElementById('opacity-value');
+  opSlider.value = widgetOpacity;
+  opValue.textContent = widgetOpacity + '%';
+  opSlider.addEventListener('input', () => {
+    widgetOpacity = parseInt(opSlider.value);
+    opValue.textContent = widgetOpacity + '%';
+    saveSettings();
+    applySettings();
+  });
+
+  // Font size slider
+  const fsSlider = document.getElementById('fontsize-slider');
+  const fsValue = document.getElementById('fontsize-value');
+  fsSlider.value = clockFontSize;
+  fsValue.textContent = (clockFontSize / 10).toFixed(1) + 'rem';
+  fsSlider.addEventListener('input', () => {
+    clockFontSize = parseInt(fsSlider.value);
+    fsValue.textContent = (clockFontSize / 10).toFixed(1) + 'rem';
+    saveSettings();
+    applySettings();
+  });
+}
+
 function init() {
   sortClocksByLongitude();
   buildClockBar();
+  initSettings();
+  applySettings();
   resize();
   tick();
 }

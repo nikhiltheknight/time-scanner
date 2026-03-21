@@ -68,6 +68,13 @@
     margin-top: 2px;
   }
 
+  .clock-tz {
+    font-size: 0.65rem;
+    color: #6e7681;
+    margin-top: 1px;
+    letter-spacing: 0.5px;
+  }
+
   .clock-label {
     font-size: 0.75rem;
     cursor: pointer;
@@ -534,6 +541,7 @@ function buildClockBar() {
     w.innerHTML = `
       <div class="clock-time" id="ct${i}">--:--</div>
       <div class="clock-date" id="cd${i}"></div>
+      <div class="clock-tz" id="ctz${i}"></div>
       <div class="clock-label" id="cl${i}">
         <span class="clock-marker" style="background:${MARKER_COLORS[i]}"></span>
         <span class="clock-label-text" id="clt${i}">${loc.name}</span>
@@ -632,6 +640,9 @@ function updateClocks() {
       });
       document.getElementById(`ct${i}`).textContent = timeFmt.format(now);
       document.getElementById(`cd${i}`).textContent = dateFmt.format(now);
+      const abbr = getShortTzName(loc.tz, now);
+      const offset = getUtcOffset(loc.tz, now);
+      document.getElementById(`ctz${i}`).textContent = `${abbr} ${offset}`;
     } catch {
       document.getElementById(`ct${i}`).textContent = '--:--';
     }

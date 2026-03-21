@@ -143,8 +143,26 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    display: flex;
+    align-items: center;
+    gap: 6px;
   }
   .tz-item:hover { background: rgba(88,166,255,0.15); color: #e6edf3; }
+  .tz-star {
+    flex-shrink: 0;
+    font-size: 0.8rem;
+    color: #484f58;
+    cursor: pointer;
+    line-height: 1;
+  }
+  .tz-star:hover { color: #ffd43b; }
+  .tz-star.active { color: #ffd43b; }
+  .tz-item-name { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+  .tz-fav-divider {
+    border: none;
+    border-top: 1px solid #30363d;
+    margin: 2px 10px;
+  }
   .tz-item-offset {
     color: #8b949e;
     margin-left: 4px;
@@ -288,6 +306,12 @@ let isDragging = false;
 let dragStartX = 0;
 let dragStartOffset = 0;
 let timeFrozen = false;
+
+// Favourite location indices — persisted to localStorage
+let favourites = new Set(JSON.parse(localStorage.getItem('ts-favourites') || '[]'));
+function saveFavourites() {
+  localStorage.setItem('ts-favourites', JSON.stringify([...favourites]));
+}
 
 // Each slot stores the index into LOCATIONS
 let selectedLocationIdx = [
@@ -591,38 +615,82 @@ function populateLocationList(listEl, filter, clockIndex) {
   // Locations already used by other clocks (prevent duplicates)
   const usedIndices = new Set(selectedLocationIdx.filter((_, i) => i !== clockIndex));
 
-  // Filter locations by name, timezone, or abbreviation — exclude already-used locations
-  const filtered = LOCATIONS.filter((loc, idx) => {
-    if (usedIndices.has(idx)) return false;
-    if (!filter) return true;
-    const offset = getUtcOffset(loc.tz, now);
-    const abbr = getShortTzName(loc.tz, now);
-    return loc.name.toLowerCase().includes(lowerFilter) ||
-           loc.tz.toLowerCase().includes(lowerFilter) ||
-           offset.toLowerCase().includes(lowerFilter) ||
-           abbr.toLowerCase().includes(lowerFilter);
+  // Filter locations — exclude already-selected
+  const filtered = [];
+  for (let idx = 0; idx < LOCATIONS.length; idx++) {
+    if (usedIndices.has(idx)) continue;
+    const loc = LOCATIONS[idx];
+    if (filter) {
+      const offset = getUtcOffset(loc.tz, now);
+      const abbr = getShortTzName(loc.tz, now);
+      const match = loc.name.toLowerCase().includes(lowerFilter) ||
+                    loc.tz.toLowerCase().includes(lowerFilter) ||
+                    offset.toLowerCase().includes(lowerFilter) ||
+                    abbr.toLowerCase().includes(lowerFilter);
+      if (!match) continue;
+    }
+    filtered.push(idx);
+  }
+
+  // Sort: favourites first, then the rest
+  filtered.sort((a, b) => {
+    const aFav = favourites.has(a);
+    const bFav = favourites.has(b);
+    if (aFav && !bFav) return -1;
+    if (!aFav && bFav) return 1;
+    return 0;
   });
 
   listEl.innerHTML = '';
   const frag = document.createDocumentFragment();
-  for (let j = 0; j < filtered.length; j++) {
-    const loc = filtered[j];
-    const locIdx = LOCATIONS.indexOf(loc);
+  let addedDivider = false;
+
+  for (const locIdx of filtered) {
+    const loc = LOCATIONS[locIdx];
+    const isFav = favourites.has(locIdx);
+
+    // Add divider between favourites and non-favourites
+    if (!isFav && !addedDivider && favourites.size > 0 && filtered.some(i => favourites.has(i))) {
+      const hr = document.createElement('hr');
+      hr.className = 'tz-fav-divider';
+      frag.appendChild(hr);
+      addedDivider = true;
+    }
+
     const offset = getUtcOffset(loc.tz, now);
     const abbr = getShortTzName(loc.tz, now);
 
     const item = document.createElement('div');
     item.className = 'tz-item';
-    item.innerHTML = `${loc.name} <span class="tz-item-offset">${abbr} ${offset}</span>`;
-    item.addEventListener('click', (e) => {
+
+    const star = document.createElement('span');
+    star.className = 'tz-star' + (isFav ? ' active' : '');
+    star.textContent = isFav ? '\u2605' : '\u2606';
+    star.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (favourites.has(locIdx)) {
+        favourites.delete(locIdx);
+      } else {
+        favourites.add(locIdx);
+      }
+      saveFavourites();
+      populateLocationList(listEl, filter, clockIndex);
+    });
+
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'tz-item-name';
+    nameSpan.innerHTML = `${loc.name} <span class="tz-item-offset">${abbr} ${offset}</span>`;
+    nameSpan.addEventListener('click', (e) => {
       e.stopPropagation();
       selectedLocationIdx[clockIndex] = locIdx;
-      // Sort clocks by map longitude order, then rebuild the clock bar
       sortClocksByLongitude();
       buildClockBar();
       updateClocks();
       render();
     });
+
+    item.appendChild(star);
+    item.appendChild(nameSpan);
     frag.appendChild(item);
   }
   listEl.appendChild(frag);
